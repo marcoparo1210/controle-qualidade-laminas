@@ -17,7 +17,6 @@ if arquivo is not None:
     df_dados = pd.read_excel(arquivo, sheet_name="Dados")
     df_config = pd.read_excel(arquivo, sheet_name="Config")
     
-    # Tratamento de segurança para as colunas
     if 'Cod_Item' in df_config.columns:
         df_config['Cod_Item'] = df_config['Cod_Item'].astype(str).str.strip()
     if 'Cod_Item' in df_dados.columns:
@@ -60,16 +59,26 @@ if arquivo is not None:
             def buscar_config(row):
                 ref_id = row['Cod_Item'] if str(row['Tipo_Item']).upper() == "FX" else row['Forma_Utlizada']
                 conf = df_config[(df_config['Cod_Item'] == ref_id) & (df_config['Data_Inicio'] <= row['Data'])]
+                
                 if not conf.empty:
                     u = conf.sort_values('Data_Inicio', ascending=False).iloc[0]
-                    return pd.Series([u['Valor_Nominal'], u['Limite_Sup'], u['Limite_Inf']])
-                return pd.Series([None, None, None])
+                    nom = u['Valor_Nominal']
+                    
+                    # CORREÇÃO: Usa min() e max() para blindar contra valores trocados no Excel
+                    v1 = nom + u['Limite_Sup']
+                    v2 = nom + u['Limite_Inf']
+                    lei = min(v1, v2)
+                    les = max(v1, v2)
+                    
+                    # CORREÇÃO: Adiciona as etiquetas (index) para o Pandas saber onde guardar os números
+                    return pd.Series([nom, lei, les], index=['Nominal', 'LEI', 'LES'])
+                
+                return pd.Series([None, None, None], index=['Nominal', 'LEI', 'LES'])
 
-            df_filtrado[['Nominal', 'Tol_Inf', 'Tol_Sup']] = df_filtrado.apply(buscar_config, axis=1)
-            df_filtrado['LEI'] = df_filtrado['Nominal'] + df_filtrado['Tol_Inf']
-            df_filtrado['LES'] = df_filtrado['Nominal'] + df_filtrado['Tol_Sup']
+            # Atribuição direta com as colunas corretas
+            df_filtrado[['Nominal', 'LEI', 'LES']] = df_filtrado.apply(buscar_config, axis=1)
             
-            # Status seguro (verifica se LEI/LES existem antes de comparar)
+            # Status seguro
             df_filtrado['Status'] = df_filtrado.apply(lambda r: "✅ OK" if pd.notna(r['LEI']) and r['LEI'] <= r['Altura_Medida'] <= r['LES'] else ("❌ Fora" if pd.notna(r['LEI']) else "⚠️ Sem Regra"), axis=1)
             df_filtrado['Desvio (mm)'] = df_filtrado['Altura_Medida'] - df_filtrado['Nominal']
 
@@ -77,11 +86,9 @@ if arquivo is not None:
             if show_kpis:
                 st.markdown("### 📈 Resumo Estatístico e Capabilidade (Cpk)")
                 
-                # Prepara o resumo base
                 resumo = df_filtrado.groupby("Tipo_Item")["Altura_Medida"].agg(['count', 'mean', 'std']).reset_index()
                 resumo.columns = ["Item", "Qtd", "Média (mm)", "Desvio Padrão (σ)"]
                 
-                # Calcula o Cpk linha a linha com segurança
                 cpk_list = []
                 for idx, row in resumo.iterrows():
                     t = row['Item']
@@ -89,7 +96,6 @@ if arquivo is not None:
                     std = row['Desvio Padrão (σ)']
                     mean = row['Média (mm)']
                     
-                    # Pega os limites seguros (ignora NaNs)
                     les = df_t['LES'].dropna().iloc[-1] if not df_t['LES'].dropna().empty else None
                     lei = df_t['LEI'].dropna().iloc[-1] if not df_t['LEI'].dropna().empty else None
                     
@@ -101,13 +107,11 @@ if arquivo is not None:
                         
                 resumo['Cpk'] = cpk_list
 
-                # Cartões no topo
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Amostras", len(df_filtrado))
                 c2.metric("Aprovação", f"{(len(df_filtrado[df_filtrado['Status'] == '✅ OK']) / len(df_filtrado)) * 100:.1f}%")
                 c3.metric("Média Desvio", f"{df_filtrado['Desvio (mm)'].mean():.3f} mm")
                 
-                # Tenta exibir o Cpk do FX no cartão
                 fx_cpk = resumo[resumo['Item'].str.upper() == 'FX']['Cpk']
                 c4.metric("Cpk Geral (FX)", f"{fx_cpk.values[0]:.2f}" if not fx_cpk.empty and pd.notna(fx_cpk.values[0]) else "N/A")
                 
@@ -134,7 +138,6 @@ if arquivo is not None:
                     st.subheader(f"Análise: {t}")
                     df_t = df_filtrado[df_filtrado['Tipo_Item'] == t]
                     
-                    # Busca limites seguros (sem quebrar se não existirem)
                     les = df_t['LES'].dropna().iloc[-1] if not df_t['LES'].dropna().empty else None
                     lei = df_t['LEI'].dropna().iloc[-1] if not df_t['LEI'].dropna().empty else None
                     nom = df_t['Nominal'].dropna().iloc[-1] if not df_t['Nominal'].dropna().empty else None
