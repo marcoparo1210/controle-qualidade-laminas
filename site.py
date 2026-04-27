@@ -36,7 +36,6 @@ if arquivo is not None:
     datas = df_dados['DATA'].min().date(), df_dados['DATA'].max().date()
     periodo = st.sidebar.date_input("Período", [datas[0], datas[1]])
     
-    # Aviso explicativo do novo padrão de qualidade
     st.sidebar.markdown("---")
     st.sidebar.info("📐 **Padrão Estatístico Ativo:** O cálculo de amostras ideais para 95% de confiança está fixado com uma Margem de Erro (E) equivalente a **10% da Tolerância Total** de cada peça.")
 
@@ -98,18 +97,14 @@ if arquivo is not None:
                     les = df_t['LES'].dropna().iloc[-1] if not df_t['LES'].dropna().empty else None
                     lei = df_t['LEI'].dropna().iloc[-1] if not df_t['LEI'].dropna().empty else None
                     
-                    # Cálculo Cpk
                     if pd.notna(std) and std > 0 and pd.notna(les) and pd.notna(lei):
                         cpk_list.append(min((les - mean)/(3*std), (mean - lei)/(3*std)))
                     else:
                         cpk_list.append(None)
                         
-                    # Cálculo Confiança 95% Automático (E = 10% da Tolerância)
                     if pd.notna(std) and std > 0 and pd.notna(les) and pd.notna(lei) and (les > lei):
                         tolerancia_total = les - lei
-                        margem_erro = 0.10 * tolerancia_total # O "E" cravado em 10%
-                        
-                        # n = (Z * std / E)^2  (Z = 1.96 para 95% de confiança)
+                        margem_erro = 0.10 * tolerancia_total
                         n_ideal = math.ceil(((1.96 * std) / margem_erro) ** 2)
                         
                         if qtd >= n_ideal:
@@ -131,13 +126,37 @@ if arquivo is not None:
                 
                 st.dataframe(resumo.style.format({"Média (mm)": "{:.2f}", "Desvio Padrão (σ)": "{:.3f}", "Cpk": "{:.2f}"}, na_rep="-"), use_container_width=True)
 
-            # --- PAINEL DE DECISÃO ---
+            # --- PAINEL DE DECISÃO (NOVO: FOCADO NO ALVO FX) ---
             if show_decision:
                 st.markdown("---")
-                st.subheader("🎯 Onde Ajustar?")
-                desvio_resumo = df_filtrado.groupby("TIPO_ITEM")["DESVIO"].mean().reset_index()
-                fig_dec = px.bar(desvio_resumo, x="TIPO_ITEM", y="DESVIO", color="DESVIO", title="Impacto das Lâminas no Feixe", color_continuous_scale='RdBu_r')
-                st.plotly_chart(fig_dec, use_container_width=True)
+                st.subheader("🎯 Decisão de Ajuste do Feixe (Alvo: Nominal + 2)")
+                
+                df_fx = df_filtrado[df_filtrado['TIPO_ITEM'] == 'FX']
+                
+                if not df_fx.empty:
+                    media_fx = df_fx['ALTURA_MEDIDA'].mean()
+                    nominal_fx = df_fx['NOMINAL'].dropna().iloc[-1] if not df_fx['NOMINAL'].dropna().empty else None
+                    
+                    if pd.notna(nominal_fx):
+                        alvo_fx = nominal_fx + 2
+                        ajuste = alvo_fx - media_fx
+                        
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Média Atual do Feixe", f"{media_fx:.2f} mm")
+                        col2.metric("Alvo Ideal (Nominal + 2)", f"{alvo_fx:.2f} mm")
+                        
+                        if ajuste > 0:
+                            col3.metric("Ajuste Necessário", f"⬆️ Subir {ajuste:.2f} mm", delta=f"+{ajuste:.2f} mm")
+                        elif ajuste < 0:
+                            col3.metric("Ajuste Necessário", f"⬇️ Descer {abs(ajuste):.2f} mm", delta=f"{ajuste:.2f} mm", delta_color="inverse")
+                        else:
+                            col3.metric("Ajuste Necessário", "✅ Perfeito", delta="0.00 mm", delta_color="off")
+                            
+                        st.info(f"Para colocar a média do feixe exatamente no alvo de **{alvo_fx:.2f} mm**, aplique uma alteração de **{ajuste:+.2f} mm** no conjunto.")
+                    else:
+                        st.warning("Valor nominal do Feixe (FX) não encontrado para calcular o alvo.")
+                else:
+                    st.info("Não existem amostras do Feixe (FX) no período selecionado para calcular o ajuste.")
 
             # --- GRÁFICOS ---
             for t in df_filtrado['TIPO_ITEM'].unique():
