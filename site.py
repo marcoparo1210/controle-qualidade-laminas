@@ -83,7 +83,7 @@ if arquivo is not None:
             if len(itens_sem_limite) > 0:
                 st.warning(f"Atenção: Limites não encontrados na aba Config para os itens: {', '.join(itens_sem_limite)}.")
 
-            # --- MÉTRICAS, CPK E CONFIANÇA 95% PADRONIZADA ---
+            # --- MÉTRICAS E CONFIANÇA 95% ---
             if show_kpis:
                 resumo = df_filtrado.groupby("TIPO_ITEM")["ALTURA_MEDIDA"].agg(['count', 'mean', 'std']).reset_index()
                 resumo.columns = ["Item", "Qtd", "Média (mm)", "Desvio Padrão (σ)"]
@@ -126,7 +126,7 @@ if arquivo is not None:
                 
                 st.dataframe(resumo.style.format({"Média (mm)": "{:.2f}", "Desvio Padrão (σ)": "{:.3f}", "Cpk": "{:.2f}"}, na_rep="-"), use_container_width=True)
 
-            # --- PAINEL DE DECISÃO (NOVO: FOCADO NO ALVO FX) ---
+            # --- PAINEL DE DECISÃO (COM TRAVA ESTATÍSTICA) ---
             if show_decision:
                 st.markdown("---")
                 st.subheader("🎯 Decisão de Ajuste do Feixe (Alvo: Nominal + 2)")
@@ -134,27 +134,49 @@ if arquivo is not None:
                 df_fx = df_filtrado[df_filtrado['TIPO_ITEM'] == 'FX']
                 
                 if not df_fx.empty:
-                    media_fx = df_fx['ALTURA_MEDIDA'].mean()
-                    nominal_fx = df_fx['NOMINAL'].dropna().iloc[-1] if not df_fx['NOMINAL'].dropna().empty else None
+                    # Avalia a confiabilidade estatística especificamente para o FX
+                    std_fx = df_fx['ALTURA_MEDIDA'].std()
+                    qtd_fx = len(df_fx)
+                    les_fx = df_fx['LES'].dropna().iloc[-1] if not df_fx['LES'].dropna().empty else None
+                    lei_fx = df_fx['LEI'].dropna().iloc[-1] if not df_fx['LEI'].dropna().empty else None
                     
-                    if pd.notna(nominal_fx):
-                        alvo_fx = nominal_fx + 2
-                        ajuste = alvo_fx - media_fx
+                    confiabilidade_ok = False
+                    faltas_msg = "Amostras insuficientes para calcular variação"
+                    
+                    if pd.notna(std_fx) and std_fx > 0 and pd.notna(les_fx) and pd.notna(lei_fx) and (les_fx > lei_fx):
+                        margem_erro_fx = 0.10 * (les_fx - lei_fx)
+                        n_ideal_fx = math.ceil(((1.96 * std_fx) / margem_erro_fx) ** 2)
                         
-                        col1, col2, col3 = st.columns(3)
-                        col1.metric("Média Atual do Feixe", f"{media_fx:.2f} mm")
-                        col2.metric("Alvo Ideal (Nominal + 2)", f"{alvo_fx:.2f} mm")
-                        
-                        if ajuste > 0:
-                            col3.metric("Ajuste Necessário", f"⬆️ Subir {ajuste:.2f} mm", delta=f"+{ajuste:.2f} mm")
-                        elif ajuste < 0:
-                            col3.metric("Ajuste Necessário", f"⬇️ Descer {abs(ajuste):.2f} mm", delta=f"{ajuste:.2f} mm", delta_color="inverse")
+                        if qtd_fx >= n_ideal_fx:
+                            confiabilidade_ok = True
                         else:
-                            col3.metric("Ajuste Necessário", "✅ Perfeito", delta="0.00 mm", delta_color="off")
+                            faltas_msg = f"Faltam {n_ideal_fx - qtd_fx} amostras"
+                    
+                    # Libera ou Bloqueia o Painel
+                    if confiabilidade_ok:
+                        media_fx = df_fx['ALTURA_MEDIDA'].mean()
+                        nominal_fx = df_fx['NOMINAL'].dropna().iloc[-1] if not df_fx['NOMINAL'].dropna().empty else None
+                        
+                        if pd.notna(nominal_fx):
+                            alvo_fx = nominal_fx + 2
+                            ajuste = alvo_fx - media_fx
                             
-                        st.info(f"Para colocar a média do feixe exatamente no alvo de **{alvo_fx:.2f} mm**, aplique uma alteração de **{ajuste:+.2f} mm** no conjunto.")
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("Média Atual do Feixe", f"{media_fx:.2f} mm")
+                            col2.metric("Alvo Ideal (Nominal + 2)", f"{alvo_fx:.2f} mm")
+                            
+                            if ajuste > 0:
+                                col3.metric("Ajuste Necessário", f"⬆️ Subir {ajuste:.2f} mm", delta=f"+{ajuste:.2f} mm")
+                            elif ajuste < 0:
+                                col3.metric("Ajuste Necessário", f"⬇️ Descer {abs(ajuste):.2f} mm", delta=f"{ajuste:.2f} mm", delta_color="inverse")
+                            else:
+                                col3.metric("Ajuste Necessário", "✅ Perfeito", delta="0.00 mm", delta_color="off")
+                                
+                            st.info(f"Para colocar a média do feixe exatamente no alvo de **{alvo_fx:.2f} mm**, aplique uma alteração de **{ajuste:+.2f} mm** no conjunto.")
+                        else:
+                            st.warning("Valor nominal do Feixe (FX) não encontrado para calcular o alvo.")
                     else:
-                        st.warning("Valor nominal do Feixe (FX) não encontrado para calcular o alvo.")
+                        st.warning(f"⚠️ **Ajuste Bloqueado:** A confiabilidade estatística de 95% ainda não foi atingida ({faltas_msg}). É necessário aumentar o número de amostras do Feixe (FX) antes de tomar uma decisão de ajuste confiável.")
                 else:
                     st.info("Não existem amostras do Feixe (FX) no período selecionado para calcular o ajuste.")
 
