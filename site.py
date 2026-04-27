@@ -36,11 +36,9 @@ if arquivo is not None:
     datas = df_dados['DATA'].min().date(), df_dados['DATA'].max().date()
     periodo = st.sidebar.date_input("Período", [datas[0], datas[1]])
     
-    # NOVO: Margem de erro para o cálculo estatístico de amostras
+    # Aviso explicativo do novo padrão de qualidade
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📐 Parâmetros Estatísticos")
-    margem_erro = st.sidebar.number_input("Margem de Erro p/ 95% Confiança (mm)", value=0.5, step=0.1, 
-                                          help="Erro máximo aceitável entre a média da amostra e a média real do lote.")
+    st.sidebar.info("📐 **Padrão Estatístico Ativo:** O cálculo de amostras ideais para 95% de confiança está fixado com uma Margem de Erro (E) equivalente a **10% da Tolerância Total** de cada peça.")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("👁️ Mostrar/Ocultar")
@@ -86,7 +84,7 @@ if arquivo is not None:
             if len(itens_sem_limite) > 0:
                 st.warning(f"Atenção: Limites não encontrados na aba Config para os itens: {', '.join(itens_sem_limite)}.")
 
-            # --- MÉTRICAS, CPK E CONFIANÇA 95% ---
+            # --- MÉTRICAS, CPK E CONFIANÇA 95% PADRONIZADA ---
             if show_kpis:
                 resumo = df_filtrado.groupby("TIPO_ITEM")["ALTURA_MEDIDA"].agg(['count', 'mean', 'std']).reset_index()
                 resumo.columns = ["Item", "Qtd", "Média (mm)", "Desvio Padrão (σ)"]
@@ -106,10 +104,14 @@ if arquivo is not None:
                     else:
                         cpk_list.append(None)
                         
-                    # Cálculo Confiança 95%
-                    if pd.notna(std) and std > 0 and margem_erro > 0:
+                    # Cálculo Confiança 95% Automático (E = 10% da Tolerância)
+                    if pd.notna(std) and std > 0 and pd.notna(les) and pd.notna(lei) and (les > lei):
+                        tolerancia_total = les - lei
+                        margem_erro = 0.10 * tolerancia_total # O "E" cravado em 10%
+                        
                         # n = (Z * std / E)^2  (Z = 1.96 para 95% de confiança)
                         n_ideal = math.ceil(((1.96 * std) / margem_erro) ** 2)
+                        
                         if qtd >= n_ideal:
                             amostras_status_list.append("✅ OK")
                         else:
